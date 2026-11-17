@@ -9,7 +9,7 @@ REST API для отдела, который обзванивает органи
 Нужен Docker с compose.
 
 ```bash
-git clone <ссылка на репозиторий> crm-calls-api
+git clone https://github.com/arystan01/crm-calls-api.git
 cd crm-calls-api
 docker compose up --build
 ```
@@ -27,7 +27,7 @@ docker compose exec api pytest -q
 Нужен Python 3.10 или новее (проверял на 3.12).
 
 ```bash
-git clone <ссылка на репозиторий> crm-calls-api
+git clone https://github.com/arystan01/crm-calls-api.git
 cd crm-calls-api
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
