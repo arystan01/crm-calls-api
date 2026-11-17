@@ -248,9 +248,9 @@ def update_meeting(meeting_id: int, body: MeetingPatch):
 
 
 @app.get("/managers/{manager_id}/schedule")
-def manager_schedule(manager_id: int, date: date):
+def manager_schedule(manager_id: int, day: date = Query(alias="date")):
     """Встречи менеджера за день. День считаем по Алматы: с 00:00 до 24:00 местного времени."""
-    day_start = datetime(date.year, date.month, date.day, tzinfo=ALMATY)
+    day_start = datetime(day.year, day.month, day.day, tzinfo=ALMATY)
     day_end = day_start + timedelta(days=1)
 
     with db.reading() as conn:
@@ -265,7 +265,46 @@ def manager_schedule(manager_id: int, date: date):
     return {
         "manager_id": manager_id,
         "manager_name": manager["name"],
-        "date": date.isoformat(),
+        "date": day.isoformat(),
         "timezone": "Asia/Almaty",
         "meetings": [dict(r) for r in rows],
     }
+
+
+# ---------- звонки ----------
+
+class CallIn(BaseModel):
+    company_id: int
+    result: Literal["no_answer", "refused", "meeting_set"]
+    meeting_id: int | None = None  # обязателен, если result = meeting_set
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+@app.post("/calls", status_code=201)
+def create_call(body: CallIn):
+    with db.transaction() as conn:
+        get_or_404(conn, "companies", body.company_id, "Организация")
+
+        if body.result == "meeting_set":
+            if body.meeting_id is None:
+                raise ApiError(
+                    422, "meeting_required",
+                    "Результат meeting_set требует meeting_id. Сначала создайте встречу через POST /meetings.",
+                )
+            meeting = conn.execute("SELECT * FROM meetings WHERE id = ?", (body.meeting_id,)).fetchone()
+            if meeting is None:
+                raise ApiError(422, "meeting_required", f"Встреча с id {body.meeting_id} не найдена")
+            if meeting["company_id"] != body.company_id:
+                raise ApiError(422, "meeting_mismatch", "Встреча назначена другой организации")
+            if meeting["status"] != "scheduled":
+                raise ApiError(422, "meeting_cancelled", "Встреча отменена, к ней нельзя привязать звонок")
+        elif body.meeting_id is not None:
+            raise ApiError(422, "validation_error", "meeting_id передается только при результате meeting_set")
+
+        cur = conn.execute(
+            "INSERT INTO calls (company_id, result, meeting_id, comment, created_at) VALUES (?, ?, ?, ?, ?)",
+            (body.company_id, body.result, body.meeting_id, body.comment, fmt(now_utc())),
+        )
+        # Статус организации = результат последнего звонка, по нему работает фильтр GET /companies?status=
+        conn.execute("UPDATE companies SET status = ? WHERE id = ?", (body.result, body.company_id))
+        return dict(conn.execute("SELECT * FROM calls WHERE id = ?", (cur.lastrowid,)).fetchone())
